@@ -35,9 +35,11 @@ except Exception as e:  # pragma: no cover
         "openenv is required for the web interface. Install dependencies with '\n    uv sync\n'"
     ) from e
 
+from fastapi import status
+
 try:
-    from ..models import StaticAction, StaticObservation
-    from .static_environment import StaticEnvironment
+    from static.models import StaticAction, StaticObservation
+    from static_environment import StaticEnvironment
 except ModuleNotFoundError:
     from models import StaticAction, StaticObservation
     from server.static_environment import StaticEnvironment
@@ -51,6 +53,24 @@ app = create_app(
     env_name="static",
     max_concurrent_envs=1,  # increase this number to allow more concurrent WebSocket sessions
 )
+
+
+@app.get("/", status_code=status.HTTP_200_OK, tags=["Meta"])
+def root() -> dict:
+    """Return a short welcome payload with pointers to useful endpoints."""
+    return {
+        "name": "static",
+        "message": "Static environment server is running.",
+        "endpoints": {
+            "docs": "/docs",
+            "openapi": "/openapi.json",
+            "reset": "/reset",
+            "step": "/step",
+            "state": "/state",
+            "schema": "/schema",
+            "websocket": "/ws",
+        },
+    }
 
 
 def main(host: str = "0.0.0.0", port: int = 8000):
