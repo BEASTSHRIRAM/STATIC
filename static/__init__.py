@@ -4,13 +4,13 @@
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree.
 
-"""Static Environment."""
+"""NeoVentEnv - Neonatal Mechanical Ventilator Management Environment."""
 
-from .client import StaticEnv
-from .models import StaticAction, StaticObservation
+from .client import NeoVentEnvClient
+from .models import NeoVentAction, NeoVentObservation
 
 __all__ = [
-    "StaticAction",
-    "StaticObservation",
-    "StaticEnv",
+    "NeoVentAction",
+    "NeoVentObservation",
+    "NeoVentEnvClient",
 ]

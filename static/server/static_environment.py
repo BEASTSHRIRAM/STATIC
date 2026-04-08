@@ -5,10 +5,10 @@
 # LICENSE file in the root directory of this source tree.
 
 """
-Static Environment Implementation.
+NeoVentEnv Environment Implementation.
 
-A simple test environment that echoes back messages sent to it.
-Perfect for testing HTTP server infrastructure.
+Neonatal mechanical ventilator management environment.
+Agent acts as respiratory therapist for premature babies in the NICU.
 """
 
 from uuid import uuid4
@@ -17,81 +17,93 @@ from openenv.core.env_server.interfaces import Environment
 from openenv.core.env_server.types import State
 
 try:
-    from ..models import StaticAction, StaticObservation
+    from ..models import NeoVentAction, NeoVentObservation
+    from ..env.neovent_env import NeoVentEnv
 except ImportError:
-    from models import StaticAction, StaticObservation
+    from models import NeoVentAction, NeoVentObservation
+    from env.neovent_env import NeoVentEnv
 
 
-class StaticEnvironment(Environment):
+class NeoVentEnvironment(Environment):
     """
-    A simple echo environment that echoes back messages.
+    Neonatal ventilator management environment.
 
-    This environment is designed for testing the HTTP server infrastructure.
-    It maintains minimal state and simply echoes back whatever message it receives.
+    Agent plays the role of a respiratory therapist. At every timestep it
+    observes the baby's current physiological state and decides how to adjust
+    the ventilator settings. The goal is to keep SpO2 in the safe range
+    (91-95%) while minimising lung damage (barotrauma) and oxygen toxicity.
+
+    Real premature babies die from poor ventilator management.
+    This environment reflects that weight.
 
     Example:
-        >>> env = StaticEnvironment()
-        >>> obs = env.reset()
-        >>> print(obs.echoed_message)  # "Static environment ready!"
-        >>>
-        >>> obs = env.step(StaticAction(message="Hello"))
-        >>> print(obs.echoed_message)  # "Hello"
-        >>> print(obs.message_length)  # 5
+        >>> env = NeoVentEnvironment()
+        >>> obs = env.reset(task_id="task_easy")
+        >>> obs, _, _, _ = env.step(NeoVentAction(delta_fio2=-0.02))
     """
 
     # Enable concurrent WebSocket sessions.
-    # Set to True if your environment isolates state between instances.
-    # When True, multiple WebSocket clients can connect simultaneously, each
-    # getting their own environment instance (when using factory mode in app.py).
-    SUPPORTS_CONCURRENT_SESSIONS: bool = True
+    # Each client gets their own NeoVentEnv instance.
+    SUPPORTS_CONCURRENT_SESSIONS: bool = False
 
-    def __init__(self):
-        """Initialize the static environment."""
-        self._state = State(episode_id=str(uuid4()), step_count=0)
-        self._reset_count = 0
+    _shared_env = None
+    _shared_state = None
+    _shared_task_id = "task_easy"
+    _shared_reset_count = 0
 
-    def reset(self) -> StaticObservation:
+    def __init__(self, data_path: str = "data/patients.csv"):
+        """Initialize the neonatal ventilator environment."""
+        if NeoVentEnvironment._shared_env is None:
+            NeoVentEnvironment._shared_env = NeoVentEnv(data_path)
+        if NeoVentEnvironment._shared_state is None:
+            NeoVentEnvironment._shared_state = State(episode_id=str(uuid4()), step_count=0)
+
+        self.neovent_env = NeoVentEnvironment._shared_env
+        self._state = NeoVentEnvironment._shared_state
+        self._reset_count = NeoVentEnvironment._shared_reset_count
+        self.task_id = NeoVentEnvironment._shared_task_id
+
+    def reset(self, task_id: str = "task_easy") -> NeoVentObservation:
         """
         Reset the environment.
 
+        Args:
+            task_id: One of "task_easy", "task_medium", "task_hard"
+
         Returns:
-            StaticObservation with a ready message
+            NeoVentObservation for the initial state
         """
         self._state = State(episode_id=str(uuid4()), step_count=0)
         self._reset_count += 1
+        self.task_id = task_id
+        NeoVentEnvironment._shared_state = self._state
+        NeoVentEnvironment._shared_reset_count = self._reset_count
+        NeoVentEnvironment._shared_task_id = self.task_id
 
-        return StaticObservation(
-            echoed_message="Static environment ready!",
-            message_length=0,
-            done=False,
-            reward=0.0,
-        )
+        obs = self.neovent_env.reset(task_id)
+        return obs
 
-    def step(self, action: StaticAction) -> StaticObservation:  # type: ignore[override]
+    def step(self, action: NeoVentAction) -> NeoVentObservation:  # type: ignore[override]
         """
-        Execute a step in the environment by echoing the message.
+        Execute a step in the environment.
 
         Args:
-            action: StaticAction containing the message to echo
+            action: NeoVentAction with ventilator adjustments
 
         Returns:
-            StaticObservation with the echoed message and its length
+            NeoVentObservation with updated state
         """
         self._state.step_count += 1
+        NeoVentEnvironment._shared_state = self._state
 
-        message = action.message
-        length = len(message)
+        obs, reward_dict, done, info = self.neovent_env.step(action)
+        
+        # Merge reward back into observation for OpenEnv compatibility
+        obs.reward = reward_dict["total"]
+        obs.done = done
+        obs.metadata = info
 
-        # Simple reward: longer messages get higher rewards
-        reward = length * 0.1
-
-        return StaticObservation(
-            echoed_message=message,
-            message_length=length,
-            done=False,
-            reward=reward,
-            metadata={"original_message": message, "step": self._state.step_count},
-        )
+        return obs
 
     @property
     def state(self) -> State:

@@ -1,255 +1,310 @@
 ---
-title: Static Environment Server
-emoji: 🏀
-colorFrom: yellow
-colorTo: pink
+title: NeoVentEnv - Neonatal Ventilator Management
+colorFrom: red
+colorTo: blue
 sdk: docker
 pinned: false
 app_port: 8000
 base_path: /web
 tags:
   - openenv
+  - healthcare
+  - reinforcement-learning
+  - neonatal
 ---
 
-# Static Environment
+# NeoVentEnv
 
-A simple test environment that echoes back messages. Perfect for testing the env APIs as well as demonstrating environment usage patterns.
+NeoVentEnv is an OpenEnv-compatible simulation where an agent controls ventilator settings for premature neonates in a NICU-like scenario.
 
-## Quick Start
+At each step, the agent observes current clinical signals and chooses small, safe ventilator adjustments. The objective is to keep oxygenation in target range while reducing lung injury and oxygen toxicity.
 
-The simplest way to use the Static environment is through the `StaticEnv` class:
+## Why This Environment Exists
 
-```python
-from static import StaticAction, StaticEnv
+Bronchopulmonary dysplasia (BPD) risk increases when ventilation is poorly managed. In this environment, the agent must balance:
 
-try:
-    # Create environment from Docker image
-    staticenv = StaticEnv.from_docker_image("static-env:latest")
+- oxygenation stability (SpO2 target 91-95)
+- carbon dioxide control (pCO2 target 45-55)
+- lung-protective tidal volume (4-6 mL/kg)
+- reduced unnecessary oxygen exposure
 
-    # Reset
-    result = staticenv.reset()
-    print(f"Reset: {result.observation.echoed_message}")
+This is intentionally a tradeoff problem, not a single-metric optimization.
 
-    # Send multiple messages
-    messages = ["Hello, World!", "Testing echo", "Final message"]
+## Tasks
 
-    for msg in messages:
-        result = staticenv.step(StaticAction(message=msg))
-        print(f"Sent: '{msg}'")
-        print(f"  → Echoed: '{result.observation.echoed_message}'")
-        print(f"  → Length: {result.observation.message_length}")
-        print(f"  → Reward: {result.reward}")
+NeoVentEnv provides three benchmark tasks:
 
-finally:
-    # Always clean up
-    staticenv.close()
-```
+| Task ID | Difficulty | Max Steps | Typical Patient Profile |
+|---|---|---:|---|
+| `task_easy` | easy | 40 | stable, none/mild BPD |
+| `task_medium` | medium | 80 | moderate drift, mild/moderate BPD |
+| `task_hard` | hard | 120 | unstable mechanics, moderate/severe BPD |
 
-That's it! The `StaticEnv.from_docker_image()` method handles:
-- Starting the Docker container
-- Waiting for the server to be ready
-- Connecting to the environment
-- Container cleanup when you call `close()`
+Task metadata is defined in `openenv.yaml`.
 
-## Building the Docker Image
+## Observation Space
 
-Before using the environment, you need to build the Docker image:
+Observation model: `NeoVentObservation`.
 
-```bash
-# From project root
-docker build -t static-env:latest -f server/Dockerfile .
-```
+Main fields:
 
-## Deploying to Hugging Face Spaces
+- `patient`: static profile (gestational age, weight, BPD grade, lung volume)
+- `vitals`: dynamic clinical values (`spo2`, `pco2`, `hr`, `vt_ml`)
+- `current_settings`: ventilator settings (`pip`, `peep`, `fio2`, `rr`, `mode`)
+- `step_number`
+- `time_on_vent_hrs`
+- `cumulative_barotrauma_index`
+- `alarm_flags`
+- `context`
 
-You can easily deploy your OpenEnv environment to Hugging Face Spaces using the `openenv push` command:
+## Action Space
 
-```bash
-# From the environment directory (where openenv.yaml is located)
-openenv push
+Action model: `NeoVentAction`.
 
-# Or specify options
-openenv push --namespace my-org --private
-```
+Valid deltas:
 
-The `openenv push` command will:
-1. Validate that the directory is an OpenEnv environment (checks for `openenv.yaml`)
-2. Prepare a custom build for Hugging Face Docker space (enables web interface)
-3. Upload to Hugging Face (ensuring you're logged in)
+- `delta_pip`: `{-2, -1, 0, 1, 2}`
+- `delta_peep`: `{-1, -0.5, 0, 0.5, 1}`
+- `delta_fio2`: `{-0.05, -0.02, 0, 0.02, 0.05}`
+- `delta_rr`: `{-4, -2, 0, 2, 4}`
 
-### Prerequisites
+Invalid values are snapped to nearest valid deltas by `_validate_action` in `env/neovent_env.py`.
 
-- Authenticate with Hugging Face: The command will prompt for login if not already authenticated
+## Reward Function
 
-### Options
+Reward is shaped at every step using multiple terms:
 
-- `--directory`, `-d`: Directory containing the OpenEnv environment (defaults to current directory)
-- `--repo-id`, `-r`: Repository ID in format 'username/repo-name' (defaults to 'username/env-name' from openenv.yaml)
-- `--base-image`, `-b`: Base Docker image to use (overrides Dockerfile FROM)
-- `--private`: Deploy the space as private (default: public)
+- SpO2 targeting score
+- hypoxia penalty (strong cliff below severe thresholds)
+- gentleness score via tidal volume per kg
+- hyperoxia cost when oxygen is unnecessarily high
+- barotrauma accumulation cost
 
-### Examples
+Total reward is the sum of these components and is returned in `reward_dict["total"]`.
 
-```bash
-# Push to your personal namespace (defaults to username/env-name from openenv.yaml)
-openenv push
+## Termination Conditions
 
-# Push to a specific repository
-openenv push --repo-id my-org/my-env
+An episode can end due to:
 
-# Push with a custom base image
-openenv push --base-image ghcr.io/meta-pytorch/openenv-base:latest
+- maximum step count reached for the task
+- critical hypoxia
+- severe barotrauma threshold
 
-# Push as a private space
-openenv push --private
-
-# Combine options
-openenv push --repo-id my-org/my-env --base-image custom-base:latest --private
-```
-
-After deployment, your space will be available at:
-`https://huggingface.co/spaces/<repo-id>`
-
-The deployed space includes:
-- **Web Interface** at `/web` - Interactive UI for exploring the environment
-- **API Documentation** at `/docs` - Full OpenAPI/Swagger interface
-- **Health Check** at `/health` - Container health monitoring
-- **WebSocket** at `/ws` - Persistent session endpoint for low-latency interactions
-
-## Environment Details
-
-### Action
-**StaticAction**: Contains a single field
-- `message` (str) - The message to echo back
-
-### Observation
-**StaticObservation**: Contains the echo response and metadata
-- `echoed_message` (str) - The message echoed back
-- `message_length` (int) - Length of the message
-- `reward` (float) - Reward based on message length (length × 0.1)
-- `done` (bool) - Always False for echo environment
-- `metadata` (dict) - Additional info like step count
-
-### Reward
-The reward is calculated as: `message_length × 0.1`
-- "Hi" → reward: 0.2
-- "Hello, World!" → reward: 1.3
-- Empty message → reward: 0.0
-
-## Advanced Usage
-
-### Connecting to an Existing Server
-
-If you already have a Static environment server running, you can connect directly:
-
-```python
-from static import StaticEnv
-
-# Connect to existing server
-staticenv = StaticEnv(base_url="<ENV_HTTP_URL_HERE>")
-
-# Use as normal
-result = staticenv.reset()
-result = staticenv.step(StaticAction(message="Hello!"))
-```
-
-Note: When connecting to an existing server, `staticenv.close()` will NOT stop the server.
-
-### Using the Context Manager
-
-The client supports context manager usage for automatic connection management:
-
-```python
-from static import StaticAction, StaticEnv
-
-# Connect with context manager (auto-connects and closes)
-with StaticEnv(base_url="http://localhost:8000") as env:
-    result = env.reset()
-    print(f"Reset: {result.observation.echoed_message}")
-    # Multiple steps with low latency
-    for msg in ["Hello", "World", "!"]:
-        result = env.step(StaticAction(message=msg))
-        print(f"Echoed: {result.observation.echoed_message}")
-```
-
-The client uses WebSocket connections for:
-- **Lower latency**: No HTTP connection overhead per request
-- **Persistent session**: Server maintains your environment state
-- **Efficient for episodes**: Better for many sequential steps
-
-### Concurrent WebSocket Sessions
-
-The server supports multiple concurrent WebSocket connections. To enable this,
-modify `server/app.py` to use factory mode:
-
-```python
-# In server/app.py - use factory mode for concurrent sessions
-app = create_app(
-    StaticEnvironment,  # Pass class, not instance
-    StaticAction,
-    StaticObservation,
-    max_concurrent_envs=4,  # Allow 4 concurrent sessions
-)
-```
-
-Then multiple clients can connect simultaneously:
-
-```python
-from static import StaticAction, StaticEnv
-from concurrent.futures import ThreadPoolExecutor
-
-def run_episode(client_id: int):
-    with StaticEnv(base_url="http://localhost:8000") as env:
-        result = env.reset()
-        for i in range(10):
-            result = env.step(StaticAction(message=f"Client {client_id}, step {i}"))
-        return client_id, result.observation.message_length
-
-# Run 4 episodes concurrently
-with ThreadPoolExecutor(max_workers=4) as executor:
-    results = list(executor.map(run_episode, range(4)))
-```
-
-## Development & Testing
-
-### Direct Environment Testing
-
-Test the environment logic directly without starting the HTTP server:
-
-```bash
-# From the server directory
-python3 server/static_environment.py
-```
-
-This verifies that:
-- Environment resets correctly
-- Step executes actions properly
-- State tracking works
-- Rewards are calculated correctly
-
-### Running Locally
-
-Run the server locally for development:
-
-```bash
-uvicorn server.app:app --reload
-```
+Termination reason is tracked in environment state.
 
 ## Project Structure
 
-```
+```text
 static/
-├── .dockerignore         # Docker build exclusions
-├── __init__.py            # Module exports
-├── README.md              # This file
-├── openenv.yaml           # OpenEnv manifest
-├── pyproject.toml         # Project metadata and dependencies
-├── uv.lock                # Locked dependencies (generated)
-├── client.py              # StaticEnv client
-├── models.py              # Action and Observation models
-└── server/
-    ├── __init__.py        # Server module exports
-    ├── static_environment.py  # Core environment logic
-    ├── app.py             # FastAPI application (HTTP + WebSocket endpoints)
-    └── Dockerfile         # Container image definition
+|- openenv.yaml
+|- models.py
+|- env/
+|  |- neovent_env.py
+|  |- lung_simulator.py
+|  |- patient_loader.py
+|- graders/
+|  |- grader.py
+|- baseline/
+|  |- run_baseline.py
+|- server/
+|  |- app.py
+|  |- static_environment.py
+|  |- requirements.txt
+|  |- Dockerfile
+|- tests/
+|  |- test_env.py
+|- data/
+|  |- patients.csv
 ```
+
+## Local Setup
+
+From repository root:
+
+```bash
+cd /workspaces/STATIC
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install -r static/server/requirements.txt
+```
+
+## Running Tests
+
+```bash
+cd /workspaces/STATIC/static
+pytest tests/test_env.py -v
+```
+
+## Running the Baseline
+
+```bash
+cd /workspaces/STATIC/static
+export OPENAI_API_KEY=your_key_here
+python -m baseline.run_baseline
+```
+
+If `OPENAI_API_KEY` is missing, the baseline falls back to deterministic heuristic actions.
+
+## Starting the API Server
+
+```bash
+cd /workspaces/STATIC/static
+uvicorn server.app:app --reload --host 0.0.0.0 --port 8000
+```
+
+Useful routes:
+
+- `GET /`
+- `POST /reset`
+- `POST /step`
+- `GET /state`
+- `GET /schema`
+- `GET /docs`
+- `GET /web/`
+
+## API Examples
+
+Set base URL:
+
+```bash
+BASE=http://localhost:8000
+```
+
+Reset task:
+
+```bash
+curl -s -X POST "$BASE/reset" \
+  -H "Content-Type: application/json" \
+  -d '{"task_id":"task_easy"}'
+```
+
+Step once (note the `action` envelope):
+
+```bash
+curl -s -X POST "$BASE/step" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "action": {
+      "delta_pip": 0,
+      "delta_peep": 0,
+      "delta_fio2": -0.02,
+      "delta_rr": 0,
+      "reasoning": "gentle wean in stable oxygen range"
+    }
+  }'
+```
+
+Get current state:
+
+```bash
+curl -s "$BASE/state"
+```
+
+## Manual Playground Test Presets
+
+Use these values in `/docs` or `/web/` for quick sanity checks.
+
+1. Stable weaning test
+
+- `delta_pip: 0`
+- `delta_peep: 0`
+- `delta_fio2: -0.02`
+- `delta_rr: 0`
+
+Expected: if SpO2 remains in range, FiO2 gradually decreases.
+
+2. Rescue low SpO2
+
+- `delta_pip: 1`
+- `delta_peep: 0.5`
+- `delta_fio2: 0.02`
+- `delta_rr: 2`
+
+Expected: oxygenation should recover without extreme overshoot.
+
+3. Hyperoxia correction
+
+- `delta_pip: 0`
+- `delta_peep: 0`
+- `delta_fio2: -0.05`
+- `delta_rr: 0`
+
+Expected: SpO2 drifts down from high values and oxygen exposure improves.
+
+4. Hypercapnia correction (`pCO2 > 60`)
+
+- `delta_pip: 0`
+- `delta_peep: 0`
+- `delta_fio2: 0`
+- `delta_rr: 2` or `4`
+
+Expected: CO2 clears over subsequent steps.
+
+5. Hypocapnia correction (`pCO2 < 35`)
+
+- `delta_pip: 0`
+- `delta_peep: 0`
+- `delta_fio2: 0`
+- `delta_rr: -2` or `-4`
+
+Expected: pCO2 normalizes upward.
+
+## Grading
+
+`graders/grader.py` returns a deterministic score in `[0.0, 1.0]` based on:
+
+- time in SpO2 target range
+- critical hypoxia events
+- compliance preservation (lung protection)
+- average FiO2 (oxygen weaning quality)
+- termination penalties
+
+Expected baseline ranges (from `openenv.yaml`):
+
+- `task_easy`: `0.65-0.75`
+- `task_medium`: `0.40-0.55`
+- `task_hard`: `0.20-0.35`
+
+## Submission Validation
+
+From repo root:
+
+```bash
+cd /workspaces/STATIC
+bash scripts/validate-submission.sh
+```
+
+## Deployment
+
+Push this environment to a Hugging Face Space using OpenEnv:
+
+```bash
+cd /workspaces/STATIC
+source .venv/bin/activate
+openenv push static --repo-id Beast7878/neovent
+```
+
+## Troubleshooting
+
+1. `Call reset() before step()`
+
+- Ensure you call `/reset` first.
+- Ensure `/step` request uses `{"action": {...}}` wrapper.
+
+2. Invalid action format
+
+- Use exact field names: `delta_pip`, `delta_peep`, `delta_fio2`, `delta_rr`.
+
+3. Import errors in server container
+
+- Verify `server/__init__.py` exports `NeoVentEnvironment` and compatibility alias.
+
+4. Low score
+
+- Check for no-op actions, overly conservative settings, or delayed hypoxia response.
+- Use rescue preset for low SpO2 and then transition back to weaning.
+
+## Safety Note
+
+This environment is for simulation and benchmarking only. It is not a medical device and is not intended for direct clinical decision making.

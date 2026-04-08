@@ -38,20 +38,20 @@ except Exception as e:  # pragma: no cover
 from fastapi import status
 
 try:
-    from static.models import StaticAction, StaticObservation
-    from static_environment import StaticEnvironment
+    from static.models import NeoVentAction, NeoVentObservation
+    from static_environment import NeoVentEnvironment
 except ModuleNotFoundError:
-    from models import StaticAction, StaticObservation
-    from server.static_environment import StaticEnvironment
+    from models import NeoVentAction, NeoVentObservation
+    from server.static_environment import NeoVentEnvironment
 
 
 # Create the app with web interface and README integration
 app = create_app(
-    StaticEnvironment,
-    StaticAction,
-    StaticObservation,
-    env_name="static",
-    max_concurrent_envs=1,  # increase this number to allow more concurrent WebSocket sessions
+    NeoVentEnvironment,
+    NeoVentAction,
+    NeoVentObservation,
+    env_name="neovent",
+    max_concurrent_envs=1,  # Keep HTTP reset/step deterministic across calls
 )
 
 
@@ -59,8 +59,8 @@ app = create_app(
 def root() -> dict:
     """Return a short welcome payload with pointers to useful endpoints."""
     return {
-        "name": "static",
-        "message": "Static environment server is running.",
+        "name": "neovent",
+        "message": "NeoVentEnv server is running. Neonatal mechanical ventilator management environment.",
         "endpoints": {
             "docs": "/docs",
             "openapi": "/openapi.json",

@@ -4,8 +4,11 @@
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree.
 
-"""Static environment server components."""
+"""NeoVent environment server components."""
 
-from .static_environment import StaticEnvironment
+from .static_environment import NeoVentEnvironment
 
-__all__ = ["StaticEnvironment"]
+# Backward compatibility alias for older import paths.
+StaticEnvironment = NeoVentEnvironment
+
+__all__ = ["NeoVentEnvironment", "StaticEnvironment"]

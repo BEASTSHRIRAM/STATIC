@@ -4,7 +4,7 @@
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree.
 
-"""Static Environment Client."""
+"""NeoVentEnv Client."""
 
 from typing import Dict
 
@@ -12,14 +12,14 @@ from openenv.core import EnvClient
 from openenv.core.client_types import StepResult
 from openenv.core.env_server.types import State
 
-from .models import StaticAction, StaticObservation
+from .models import NeoVentAction, NeoVentObservation
 
 
-class StaticEnv(
-    EnvClient[StaticAction, StaticObservation, State]
+class NeoVentEnvClient(
+    EnvClient[NeoVentAction, NeoVentObservation, State]
 ):
     """
-    Client for the Static Environment.
+    Client for the NeoVentEnv Environment.
 
     This client maintains a persistent WebSocket connection to the environment server,
     enabling efficient multi-step interactions with lower latency.
@@ -27,59 +27,71 @@ class StaticEnv(
 
     Example:
         >>> # Connect to a running server
-        >>> with StaticEnv(base_url="http://localhost:8000") as client:
-        ...     result = client.reset()
-        ...     print(result.observation.echoed_message)
+        >>> with NeoVentEnvClient(base_url="http://localhost:8000") as client:
+        ...     result = client.reset(task_id="task_easy")
+        ...     print(result.observation.vitals.spo2)
         ...
-        ...     result = client.step(StaticAction(message="Hello!"))
-        ...     print(result.observation.echoed_message)
+        ...     action = NeoVentAction(delta_fio2=-0.02)
+        ...     result = client.step(action)
+        ...     print(result.observation.vitals.spo2)
 
     Example with Docker:
         >>> # Automatically start container and connect
-        >>> client = StaticEnv.from_docker_image("static-env:latest")
+        >>> client = NeoVentEnvClient.from_docker_image("neovent:latest")
         >>> try:
-        ...     result = client.reset()
-        ...     result = client.step(StaticAction(message="Test"))
+        ...     result = client.reset(task_id="task_easy")
+        ...     action = NeoVentAction(delta_fio2=-0.02)
+        ...     result = client.step(action)
         ... finally:
         ...     client.close()
     """
 
-    def _step_payload(self, action: StaticAction) -> Dict:
+    def _step_payload(self, action: NeoVentAction) -> Dict:
         """
-        Convert StaticAction to JSON payload for step message.
+        Convert NeoVentAction to JSON payload for step message.
 
         Args:
-            action: StaticAction instance
+            action: NeoVentAction instance
 
         Returns:
             Dictionary representation suitable for JSON encoding
         """
         return {
-            "message": action.message,
+            "delta_pip": action.delta_pip,
+            "delta_peep": action.delta_peep,
+            "delta_fio2": action.delta_fio2,
+            "delta_rr": action.delta_rr,
+            "reasoning": action.reasoning,
         }
 
-    def _parse_result(self, payload: Dict) -> StepResult[StaticObservation]:
+    def _parse_result(self, payload: Dict) -> StepResult[NeoVentObservation]:
         """
-        Parse server response into StepResult[StaticObservation].
+        Parse server response into StepResult[NeoVentObservation].
 
         Args:
             payload: JSON response data from server
 
         Returns:
-            StepResult with StaticObservation
+            StepResult with NeoVentObservation
         """
         obs_data = payload.get("observation", {})
-        observation = StaticObservation(
-            echoed_message=obs_data.get("echoed_message", ""),
-            message_length=obs_data.get("message_length", 0),
+        observation = NeoVentObservation(
+            patient=obs_data.get("patient", {}),
+            vitals=obs_data.get("vitals", {}),
+            current_settings=obs_data.get("current_settings", {}),
+            step_number=obs_data.get("step_number", 0),
+            time_on_vent_hrs=obs_data.get("time_on_vent_hrs", 0.0),
+            cumulative_barotrauma_index=obs_data.get("cumulative_barotrauma_index", 0.0),
+            alarm_flags=obs_data.get("alarm_flags", []),
+            context=obs_data.get("context", {}),
             done=payload.get("done", False),
-            reward=payload.get("reward"),
+            reward=payload.get("reward", 0.0),
             metadata=obs_data.get("metadata", {}),
         )
 
         return StepResult(
             observation=observation,
-            reward=payload.get("reward"),
+            reward=payload.get("reward", 0.0),
             done=payload.get("done", False),
         )
 

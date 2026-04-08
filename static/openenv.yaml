@@ -1,7 +1,77 @@
 spec_version: 1
-name: static
+name: neovent
 type: space
 runtime: fastapi
 app: server.app:app
 port: 8000
+
+description: >
+  NeoVentEnv — Neonatal mechanical ventilator management environment.
+  Agent acts as respiratory therapist for premature babies in the NICU.
+  Calibrated to real patient data from the BPD-Neo MRI dataset.
+
+tags: [healthcare, neonatal, ventilation, openenv, real-world, RL]
+domain: healthcare
+
+tasks:
+  - id: task_easy
+    name: Stable 32-week Neonate
+    difficulty: easy
+    max_steps: 40
+    description: >
+      Patient is 32 weeks gestation with mild BPD or no BPD.
+      Lung compliance is normal. SpO2 responds predictably to adjustments.
+      Agent must maintain SpO2 91-95% while weaning FiO2.
+
+  - id: task_medium
+    name: Surfactant Deficient 28-week Neonate
+    difficulty: medium
+    max_steps: 80
+    description: >
+      Patient is 28 weeks gestation with moderate BPD.
+      Surfactant deficiency causes compliance to drift downward mid-episode.
+      Agent must detect the drift and adapt settings before SpO2 degrades.
+
+  - id: task_hard
+    name: Severe BPD 24-week Neonate
+    difficulty: hard
+    max_steps: 120
+    description: >
+      Patient is 24 weeks gestation with severe BPD.
+      Compliance is critically low and unstable. Alarm events occur.
+      FiO2 requirements are high. Agent must balance oxygenation against
+      oxygen toxicity and barotrauma with no margin for error.
+
+observation_space:
+  type: structured
+  fields:
+    - patient_profile (gestational age, weight, BPD grade, MRI lung volume)
+    - vitals (SpO2, pCO2, HR, Vt)
+    - current_settings (PIP, PEEP, FiO2, RR)
+    - cumulative_barotrauma_index
+    - alarm_flags
+    - step_number
+
+action_space:
+  type: discrete_deltas
+  fields:
+    - delta_pip: {-2,-1,0,1,2}
+    - delta_peep: {-1,-0.5,0,0.5,1}
+    - delta_fio2: {-0.05,-0.02,0,0.02,0.05}
+    - delta_rr: {-4,-2,0,2,4}
+
+reward:
+  type: continuous_shaped
+  components:
+    - spo2_score (0.5 weight) - reward for keeping SpO2 in target range
+    - gentleness/lung_protection (0.3 weight) - penalizes volutrauma
+    - fio2_weaning (0.2 weight) - rewards minimal oxygen use
+    - hypoxia_penalty (cliff at SpO2 < 85) - terminal failure condition
+
+dataset: BPD-Neo (Saluja et al., Cornell, 40 neonates, MRI segmentation)
+baseline_model: gpt-4o
+expected_baseline_scores:
+  task_easy: 0.65-0.75
+  task_medium: 0.40-0.55
+  task_hard: 0.20-0.35
 
